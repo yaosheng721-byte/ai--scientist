@@ -1,0 +1,38 @@
+[project]
+name = "ai-scientist"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.116.0",
+    "uvicorn[standard]>=0.35.0",
+    "pydantic>=2.11.0",
+    "pydantic-settings>=2.10.0",
+    "python-dotenv>=1.1.0",
+    "sqlalchemy>=2.0.0",
+    "asyncpg>=0.30.0",
+    "psycopg[binary]>=3.2.0",
+    "redis>=5.2.0",
+    "langchain>=0.3.0",
+    "langchain-openai>=0.3.0",
+    "langgraph>=0.5.0",
+    "httpx>=0.28.0",
+    "requests>=2.32.0",
+    "pypdf>=5.0.0",
+    "pdfplumber>=0.11.0",
+    "opencv-python>=4.10.0",
+    "numpy>=2.0.0",
+    "pandas>=2.2.0",
+    "matplotlib>=3.9.0",
+    "streamlit>=1.45.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
