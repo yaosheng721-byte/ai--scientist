@@ -10,3 +10,15 @@ data/processed/
 outputs/
 *.log
 .idea/
+
+# datasets
+app/agents/dataset_profiling_agent/demo_dataset/
+
+# images
+*.png
+*.jpg
+*.jpeg
+
+# python cache
+__pycache__/
+*.pyc

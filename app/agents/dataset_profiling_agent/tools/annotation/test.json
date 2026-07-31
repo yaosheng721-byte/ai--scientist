@@ -1,0 +1,35 @@
+{
+    "info": {
+        "description": "test annotation file"
+    },
+
+    "images": [
+        {
+            "id": 1,
+            "file_name": "001.jpg",
+            "width": 640,
+            "height": 480
+        }
+    ],
+
+    "annotations": [
+        {
+            "id": 1,
+            "image_id": 1,
+            "category_id": 1,
+            "bbox": [
+                100,
+                120,
+                50,
+                60
+            ]
+        }
+    ],
+
+    "categories": [
+        {
+            "id": 1,
+            "name": "defect_a"
+        }
+    ]
+}
