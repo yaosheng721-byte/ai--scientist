@@ -1,0 +1,85 @@
+import {
+  DataAnalysis,
+  Document,
+  Finished,
+  Histogram,
+  List,
+  Monitor,
+  Reading,
+  TrendCharts,
+} from '@element-plus/icons-vue'
+
+export const taskModules = [
+  {
+    key: 'workflow',
+    title: '工作流状态',
+    description: '跟踪运行阶段、实时进度和结构化任务结果。',
+    routeName: 'workflow',
+    icon: Monitor,
+    group: 'core',
+  },
+  {
+    key: 'dataset',
+    title: '数据集画像',
+    description: '运行 Dataset Profiling Agent，查看统计、观察和图表。',
+    routeName: 'dataset-profile',
+    icon: DataAnalysis,
+    group: 'core',
+  },
+  {
+    key: 'tools',
+    title: '工具执行日志',
+    description: '查看工具调用输入、输出、状态和错误信息。',
+    routeName: 'tool-logs',
+    icon: List,
+    group: 'core',
+  },
+  {
+    key: 'pools',
+    title: '研究结果池',
+    description: '按 Paper、Fact、Gap、Hypothesis、Review 浏览中间产物。',
+    routeName: 'result-pool',
+    icon: Reading,
+    group: 'extended',
+  },
+  {
+    key: 'scores',
+    title: '候选假设评分',
+    description: '查看候选假设的四维评分与低分项。',
+    routeName: 'hypothesis-score',
+    icon: Histogram,
+    group: 'extended',
+  },
+  {
+    key: 'review',
+    title: '人工选择',
+    description: '查看候选内容并提交人工审核决策。',
+    routeName: 'human-review',
+    icon: Finished,
+    group: 'extended',
+  },
+  {
+    key: 'experiments',
+    title: '实验结果',
+    description: '查看实验指标、消融结果和产物列表。',
+    routeName: 'experiments',
+    icon: TrendCharts,
+    group: 'extended',
+  },
+  {
+    key: 'report',
+    title: '报告预览',
+    description: '预览最终报告并导出 Markdown 或 HTML。',
+    routeName: 'report',
+    icon: Document,
+    group: 'extended',
+  },
+]
+
+export const poolTabs = [
+  { label: 'Paper', value: 'paper' },
+  { label: 'Fact', value: 'fact' },
+  { label: 'Gap', value: 'gap' },
+  { label: 'Hypothesis', value: 'hypothesis' },
+  { label: 'Review', value: 'review' },
+]

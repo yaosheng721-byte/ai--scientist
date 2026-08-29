@@ -16,7 +16,7 @@ class Settings(BaseSettings):
         alias="DASHSCOPE_BASE_URL",
     )
     dashscope_api_key: str = Field(default="", alias="DASHSCOPE_API_KEY")
-    dashscope_model: str = Field(default="qwen-plus", alias="DASHSCOPE_MODEL")
+    dashscope_model: str = Field(default="qwen3.8-max", alias="DASHSCOPE_MODEL")
 
     database_url: str = Field(
         default="postgresql+asyncpg://ai_scientist:ai_scientist_password@localhost:5432/ai_scientist",

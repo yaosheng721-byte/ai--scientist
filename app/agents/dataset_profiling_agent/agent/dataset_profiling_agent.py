@@ -10,13 +10,20 @@ from app.core.llm import generate_observations
 
 class DatasetProfilingAgent(BaseAgent):
 
-    def run(self,input_data):
+    def run(self, input_data, progress_callback=None):
+
+        def report(progress, node, message):
+            if progress_callback:
+                progress_callback(progress, node, message)
 
         dataset_path = input_data["dataset_path"]
+
+        report(5, "initializing", "正在初始化数据画像任务")
 
         scan_result = dataset_scan(
             dataset_path
         )
+        report(15, "dataset_scan", "数据集目录扫描完成")
 
         # 遍历所有标注文件，跳过无效文件（如 README.json）
         annotation_files = scan_result.get("annotation_files", [])
@@ -27,7 +34,16 @@ class DatasetProfilingAgent(BaseAgent):
         annotation_format = None
         valid_annotation_count = 0
 
-        for ann_file in annotation_files:
+        annotation_total = len(annotation_files)
+        for index, ann_file in enumerate(annotation_files):
+            if annotation_total:
+                annotation_progress = 15 + int(index / annotation_total * 15)
+                report(
+                    annotation_progress,
+                    "annotation_parsing",
+                    f"正在解析标注文件（{index + 1}/{annotation_total}）",
+                )
+
             try:
                 ann_result = annotation_parser(ann_file)
             except Exception:
@@ -60,6 +76,8 @@ class DatasetProfilingAgent(BaseAgent):
             ratio = ann_result.get("small_object_ratio", 0)
             if count > 0:
                 merged_small_ratios.append((ratio, count))
+
+        report(30, "annotation_parsing", "标注信息解析完成")
 
         # 汇总 bbox
         if merged_bbox:
@@ -98,16 +116,27 @@ class DatasetProfilingAgent(BaseAgent):
         quality_result = image_quality(
             dataset_path
         )
+        report(50, "image_quality", "图像质量分析完成")
 
         image_analysis_result = opencv_image_analyzer(
             dataset_path
         )
+        report(72, "image_analysis", "图像特征分析完成")
 
         plot_result = plot_generator({
             "scan": scan_result,
             "quality": quality_result,
             "analysis": image_analysis_result,
         })
+        report(88, "plot_generation", "数据画像图表生成完成")
+
+        observations = _generate_observations_safely({
+            "scan": scan_result,
+            "annotation": annotation_result,
+            "quality": quality_result,
+            "image_analysis": image_analysis_result,
+        })
+        report(96, "observation_generation", "数据观察结论生成完成")
 
 
         result = {
@@ -122,12 +151,7 @@ class DatasetProfilingAgent(BaseAgent):
 
             **plot_result,
 
-            "observations": _generate_observations_safely({
-                "scan": scan_result,
-                "annotation": annotation_result,
-                "quality": quality_result,
-                "image_analysis": image_analysis_result,
-            }),
+            "observations": observations,
 
         }
 

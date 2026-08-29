@@ -20,6 +20,35 @@ def get_llm_config() -> dict:
     }
 
 
+def chat_messages(
+    messages: list[dict[str, str]],
+    temperature: float = 0.3,
+    timeout: int = 45,
+) -> str:
+    """调用 DashScope 的 OpenAI 兼容接口，支持多轮消息。"""
+    if not settings.dashscope_api_key:
+        raise RuntimeError("DASHSCOPE_API_KEY 未配置，请在 .env 文件中设置")
+
+    url = f"{settings.dashscope_base_url}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {settings.dashscope_api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": settings.dashscope_model,
+        "messages": messages,
+        "temperature": temperature,
+    }
+
+    resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+    choices = data.get("choices", [])
+    if not choices:
+        raise RuntimeError(f"LLM 返回无 choices：{data}")
+    return choices[0].get("message", {}).get("content", "")
+
+
 def chat(prompt: str, temperature: float = 0.3, timeout: int = 30) -> str:
     """调用 DashScope（百炼）的 OpenAI 兼容接口，返回模型响应文本。
 
@@ -34,29 +63,11 @@ def chat(prompt: str, temperature: float = 0.3, timeout: int = 30) -> str:
     Raises:
         RuntimeError: API Key 未配置或调用失败
     """
-    if not settings.dashscope_api_key:
-        raise RuntimeError("DASHSCOPE_API_KEY 未配置，请在 .env 文件中设置")
-
-    url = f"{settings.dashscope_base_url}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {settings.dashscope_api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": settings.dashscope_model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": temperature,
-    }
-
-    resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
-    resp.raise_for_status()
-    data = resp.json()
-
-    # OpenAI 兼容响应格式：choices[0].message.content
-    choices = data.get("choices", [])
-    if not choices:
-        raise RuntimeError(f"LLM 返回无 choices：{data}")
-    return choices[0].get("message", {}).get("content", "")
+    return chat_messages(
+        [{"role": "user", "content": prompt}],
+        temperature=temperature,
+        timeout=timeout,
+    )
 
 
 def generate_observations(profile_data: dict) -> list[str]:

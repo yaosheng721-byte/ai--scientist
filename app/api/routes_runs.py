@@ -1,8 +1,11 @@
 import asyncio
 import json
+import time
+from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.agents.dataset_profiling_agent.agent.dataset_profiling_agent import (
@@ -21,58 +24,74 @@ class RunCreateRequest(BaseModel):
     max_iterations: int = 3
 
 
-async def _run_dataset_profiling(run_id: str, dataset_path: str) -> None:
+async def _run_dataset_profiling(run_id: str, dataset_path: str, query: str = "") -> None:
     """后台任务：跑 DatasetProfilingAgent，把进度和结果写进 Redis。
 
     agent.run() 是同步阻塞函数（扫数据集 + 算图像质量 + 生成图表），
     会跑几十秒到几分钟，所以用 asyncio.to_thread 包一层，避免阻塞 event loop。
     """
-    # 初始状态：运行中
-    await redis_client.set(
-        f"run:{run_id}",
-        json.dumps(
-            {
-                "run_id": run_id,
-                "status": "running",
-                "current_node": "dataset_profiling",
-                "progress": 0,
-                "result": None,
-            }
-        ),
-    )
+    created_at = time.time()
+    state = {
+        "run_id": run_id,
+        "status": "running",
+        "current_node": "initializing",
+        "progress": 0,
+        "progress_message": "任务已进入执行队列",
+        "query": query,
+        "task_type": "dataset_profiling",
+        "dataset_path": dataset_path,
+        "created_at": created_at,
+        "result": None,
+    }
+
+    async def save_state() -> None:
+        await redis_client.set(f"run:{run_id}", json.dumps(state))
+
+    await save_state()
 
     try:
         agent = DatasetProfilingAgent()
+        loop = asyncio.get_running_loop()
+
+        def update_progress(progress: int, node: str, message: str) -> None:
+            state.update(
+                {
+                    "status": "running",
+                    "current_node": node,
+                    "progress": max(0, min(progress, 99)),
+                    "progress_message": message,
+                }
+            )
+            asyncio.run_coroutine_threadsafe(save_state(), loop).result(timeout=10)
+
         # 同步 agent 用 to_thread 丢到线程池跑，不阻塞 async event loop
-        result = await asyncio.to_thread(agent.run, {"dataset_path": dataset_path})
+        result = await asyncio.to_thread(
+            agent.run,
+            {"dataset_path": dataset_path},
+            update_progress,
+        )
 
         # 跑完了：写最终结果
-        await redis_client.set(
-            f"run:{run_id}",
-            json.dumps(
-                {
-                    "run_id": run_id,
-                    "status": "completed",
-                    "current_node": "dataset_profiling",
-                    "progress": 100,
-                    "result": result,
-                }
-            ),
+        state.update(
+            {
+                "status": "completed",
+                "current_node": "completed",
+                "progress": 100,
+                "progress_message": "数据画像任务已完成",
+                "result": result,
+            }
         )
+        await save_state()
     except Exception as e:
         # 失败了：写错误信息
-        await redis_client.set(
-            f"run:{run_id}",
-            json.dumps(
-                {
-                    "run_id": run_id,
-                    "status": "failed",
-                    "current_node": "dataset_profiling",
-                    "progress": 0,
-                    "error": str(e),
-                }
-            ),
+        state.update(
+            {
+                "status": "failed",
+                "progress_message": "任务执行失败",
+                "error": str(e),
+            }
         )
+        await save_state()
 
 
 @router.post("")
@@ -86,7 +105,9 @@ async def create_run(payload: RunCreateRequest) -> dict[str, str]:
 
     # 目前只支持 dataset_profiling 这一种任务
     if payload.task_type == "dataset_profiling" and payload.dataset_path:
-        asyncio.create_task(_run_dataset_profiling(run_id, payload.dataset_path))
+        asyncio.create_task(
+            _run_dataset_profiling(run_id, payload.dataset_path, payload.query)
+        )
     else:
         # 没匹配的任务类型：直接标记为 created，等后续扩展
         await redis_client.set(
@@ -97,6 +118,10 @@ async def create_run(payload: RunCreateRequest) -> dict[str, str]:
                     "status": "created",
                     "current_node": "not_started",
                     "progress": 0,
+                    "query": payload.query,
+                    "task_type": payload.task_type,
+                    "dataset_path": payload.dataset_path,
+                    "created_at": time.time(),
                     "result": None,
                 }
             ),
@@ -107,6 +132,37 @@ async def create_run(payload: RunCreateRequest) -> dict[str, str]:
         "status": "created",
         "query": payload.query,
     }
+
+
+@router.get("")
+async def list_runs() -> dict:
+    """任务历史列表（供前端侧边栏展示）。
+
+    扫描 Redis 里所有 run:* 的 key，返回 run_id / status / query / 创建时间，
+    按创建时间倒序（最新的在最前面）。
+    """
+    keys = await redis_client.keys("run:*")
+    runs = []
+    for key in keys:
+        data = await redis_client.get(key)
+        if not data:
+            continue
+        try:
+            item = json.loads(data)
+        except Exception:
+            continue
+        runs.append(
+            {
+                "run_id": item.get("run_id", key.replace("run:", "")),
+                "status": item.get("status", "unknown"),
+                "query": item.get("query", ""),
+                "task_type": item.get("task_type", ""),
+                "current_node": item.get("current_node", ""),
+                "created_at": item.get("created_at", 0),
+            }
+        )
+    runs.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+    return {"runs": runs}
 
 
 @router.get("/{run_id}")
@@ -120,6 +176,49 @@ async def get_run(run_id: str) -> dict:
     if not data:
         return {"run_id": run_id, "status": "not_found"}
     return json.loads(data)
+
+
+@router.get("/{run_id}/samples/{sample_index}/{media_kind}")
+async def get_sample_media(run_id: str, sample_index: int, media_kind: str):
+    """返回任务结果中的样本图或 Mask，不接受任意文件路径。"""
+    if media_kind not in {"image", "mask"}:
+        raise HTTPException(status_code=400, detail="不支持的样本媒体类型")
+
+    data = await redis_client.get(f"run:{run_id}")
+    if not data:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    run_data = json.loads(data)
+    samples = (
+        run_data.get("result", {})
+        .get("artifacts", {})
+        .get("sample_images", [])
+    )
+    if sample_index < 0 or sample_index >= len(samples):
+        raise HTTPException(status_code=404, detail="样本不存在")
+
+    path_value = samples[sample_index].get(f"{media_kind}_path")
+    if not path_value:
+        raise HTTPException(status_code=404, detail="样本媒体不存在")
+
+    media_path = Path(path_value)
+    if not media_path.is_absolute():
+        project_root = Path(__file__).resolve().parents[2]
+        media_path = project_root / media_path
+    media_path = media_path.resolve()
+
+    allowed_suffixes = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff"}
+    if not media_path.is_file() or media_path.suffix.lower() not in allowed_suffixes:
+        raise HTTPException(status_code=404, detail="样本媒体文件不存在")
+
+    return FileResponse(media_path)
+
+
+@router.delete("/{run_id}")
+async def delete_run(run_id: str) -> dict:
+    """删除任务（从 Redis 移除），供前端任务历史清理用。"""
+    deleted = await redis_client.delete(f"run:{run_id}")
+    return {"run_id": run_id, "deleted": bool(deleted)}
 
 
 # ===========================================================================
