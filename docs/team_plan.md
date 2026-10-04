@@ -239,7 +239,7 @@ CV 数据工具任务:
 
 | 编号 | 任务 | 交付物 | 验收标准 |
 | --- | --- | --- | --- |
-| DC-01 | 搭建 Streamlit 项目入口 | `frontend/streamlit_app.py` | 能启动网页首页 |
+| DC-01 | 搭建 Vue 项目入口 | `frontend-vue/` | 能启动 Vue 网页首页并作为项目 Demo 前端入口 |
 | DC-02 | 实现任务创建页 | create run page | 能输入研究问题、领域、任务类型、数据集路径 |
 | DC-03 | 接入创建任务接口 | API client | 点击按钮后能拿到 `run_id` |
 | DC-04 | 实现工作流状态页 | workflow page | 显示 Agent 节点、状态、当前节点 |

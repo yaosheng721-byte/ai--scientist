@@ -188,10 +188,11 @@ def analyze_folder(folder_path):
                 "height_max": 0
             },
             "defect_ratio": {
-                "mean": 0.0,
-                "min": 0.0,
-                "max": 0.0,
-                "has_mask": has_mask
+                "mean": None,
+                "min": None,
+                "max": None,
+                "has_mask": has_mask,
+                "mask_count": 0,
             }
         }
 
@@ -220,16 +221,18 @@ def analyze_folder(folder_path):
             "mean": float(np.mean(defect_ratios)),
             "min": float(min(defect_ratios)),
             "max": float(max(defect_ratios)),
-            "has_mask": True
+            "has_mask": True,
+            "mask_count": len(defect_ratios),
         }
 
     else:
 
         defect_ratio = {
-            "mean": 0.0,
-            "min": 0.0,
-            "max": 0.0,
-            "has_mask": has_mask
+            "mean": None,
+            "min": None,
+            "max": None,
+            "has_mask": has_mask,
+            "mask_count": 0,
         }
 
 
@@ -250,27 +253,33 @@ def calculate_split_mean(split_result):
     用于 distribution_difference 对比
     """
 
-    widths = []
-    heights = []
-    defects = []
+    width_sum = 0.0
+    height_sum = 0.0
+    image_count = 0
+    defect_sum = 0.0
+    mask_count = 0
 
     for category in split_result.values():
 
         sd = category.get("image_size_distribution", {})
 
-        widths.append(sd.get("width_mean", 0))
-
-        heights.append(sd.get("height_mean", 0))
+        count = int(category.get("num_images", 0) or 0)
+        width_sum += float(sd.get("width_mean", 0) or 0) * count
+        height_sum += float(sd.get("height_mean", 0) or 0) * count
+        image_count += count
 
         dr = category.get("defect_ratio", {})
 
-        defects.append(dr.get("mean", 0.0))
+        measured_masks = int(dr.get("mask_count", 0) or 0)
+        if measured_masks and dr.get("mean") is not None:
+            defect_sum += float(dr["mean"]) * measured_masks
+            mask_count += measured_masks
 
 
     return {
-        "width_mean": float(np.mean(widths)) if widths else 0.0,
-        "height_mean": float(np.mean(heights)) if heights else 0.0,
-        "defect_ratio_mean": float(np.mean(defects)) if defects else 0.0
+        "width_mean": width_sum / image_count if image_count else 0.0,
+        "height_mean": height_sum / image_count if image_count else 0.0,
+        "defect_ratio_mean": defect_sum / mask_count if mask_count else None,
     }
 
 
@@ -373,10 +382,11 @@ def opencv_image_analyzer(dataset_path):
                 -
                 test_mean["height_mean"]
             ),
-            "defect_ratio_difference": abs(
-                train_mean["defect_ratio_mean"]
-                -
-                test_mean["defect_ratio_mean"]
+            "defect_ratio_difference": (
+                abs(train_mean["defect_ratio_mean"] - test_mean["defect_ratio_mean"])
+                if train_mean["defect_ratio_mean"] is not None
+                and test_mean["defect_ratio_mean"] is not None
+                else None
             )
         }
 

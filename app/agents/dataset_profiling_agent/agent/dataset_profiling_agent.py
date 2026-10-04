@@ -1,3 +1,5 @@
+import os
+
 from app.agents.dataset_profiling_agent.agent.base_agent import BaseAgent
 from app.agents.dataset_profiling_agent.tools.annotation_parser import annotation_parser
 from app.agents.dataset_profiling_agent.tools.dataset_scan import dataset_scan
@@ -33,6 +35,9 @@ class DatasetProfilingAgent(BaseAgent):
         merged_small_ratios = []  # [(ratio, count), ...]
         annotation_format = None
         valid_annotation_count = 0
+        annotation_errors = []
+        annotation_warning_groups = {}
+        annotation_formats = set()
 
         annotation_total = len(annotation_files)
         for index, ann_file in enumerate(annotation_files):
@@ -46,14 +51,32 @@ class DatasetProfilingAgent(BaseAgent):
 
             try:
                 ann_result = annotation_parser(ann_file)
-            except Exception:
+            except Exception as exc:
+                annotation_errors.append({
+                    "file": ann_file,
+                    "format": _format_from_extension(ann_file),
+                    "error": f"解析时发生异常：{type(exc).__name__}: {exc}",
+                })
                 continue
 
             if not ann_result.get("is_valid", False):
+                annotation_errors.append({
+                    "file": ann_file,
+                    "format": ann_result.get("annotation_format", _format_from_extension(ann_file)),
+                    "error": ann_result.get("error", "文件内容未通过格式校验"),
+                })
                 continue
 
             valid_annotation_count += 1
-            annotation_format = ann_result.get("annotation_format", annotation_format)
+            parsed_format = ann_result.get("annotation_format")
+            if parsed_format:
+                annotation_formats.add(parsed_format)
+            if ann_result.get("warning"):
+                warning = ann_result["warning"]
+                group = annotation_warning_groups.setdefault(warning, {"warning": warning, "count": 0, "files": []})
+                group["count"] += 1
+                if len(group["files"]) < 3:
+                    group["files"].append(os.path.basename(ann_file))
 
             # 合并类别分布
             for cls, cnt in ann_result.get("class_distribution", {}).items():
@@ -99,10 +122,14 @@ class DatasetProfilingAgent(BaseAgent):
         else:
             small_object_ratio = 0
 
+        annotation_format = sorted(annotation_formats) or None
         annotation_result = {
             "annotation_format": annotation_format,
             "annotation_file_count": len(annotation_files),
             "valid_annotation_count": valid_annotation_count,
+            "invalid_annotation_count": len(annotation_errors),
+            "annotation_errors": annotation_errors,
+            "annotation_warnings": list(annotation_warning_groups.values()),
             "class_distribution": merged_class_distribution,
             "bbox_statistics": {
                 "total_bbox": total_bbox,
@@ -130,7 +157,7 @@ class DatasetProfilingAgent(BaseAgent):
         })
         report(88, "plot_generation", "数据画像图表生成完成")
 
-        observations = _generate_observations_safely({
+        observations, observation_warning = _generate_observations_safely({
             "scan": scan_result,
             "annotation": annotation_result,
             "quality": quality_result,
@@ -152,6 +179,7 @@ class DatasetProfilingAgent(BaseAgent):
             **plot_result,
 
             "observations": observations,
+            "observation_warning": observation_warning,
 
         }
 
@@ -159,19 +187,26 @@ class DatasetProfilingAgent(BaseAgent):
         return result
 
 
-def _generate_observations_safely(profile_data: dict) -> list[str]:
+def _format_from_extension(path: str) -> str:
+    return {".json": "COCO?", ".xml": "VOC?", ".txt": "YOLO?"}.get(os.path.splitext(path)[1].lower(), "未知")
+
+
+def _generate_observations_safely(profile_data: dict) -> tuple[list[str], str | None]:
     """调用 LLM 生成 observations，失败时回退到默认观察。"""
     try:
         observations = generate_observations(profile_data)
         if observations:
-            return observations
+            return observations, None
     except Exception as e:
         # LLM 调用失败（API Key 未配置 / 网络错误 / 限流等），回退到默认观察
-        pass
+        print(f"[dataset_profiling] LLM observation generation failed: {type(e).__name__}: {e}")
+        warning = f"AI 观察生成失败，已使用默认结论（{type(e).__name__}）"
+    else:
+        warning = "AI 观察生成没有返回内容，已使用默认结论"
 
     # 默认观察（LLM 不可用时兜底）
     return [
         "⚠️ LLM 观察生成失败，以下为默认观察",
         "建议检查 .env 中的 DASHSCOPE_API_KEY 是否已配置",
         f"数据集路径：{profile_data.get('scan', {}).get('dataset_path', '未知')}",
-    ]
+    ], warning

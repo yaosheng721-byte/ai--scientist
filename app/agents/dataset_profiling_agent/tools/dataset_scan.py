@@ -66,6 +66,50 @@ MASK_DIR_NAMES = {
     "groundtruth"
 }
 
+NON_ANNOTATION_TEXT_NAMES = {
+    "readme.txt",
+    "license.txt",
+    "licence.txt",
+    "classes.txt",
+    "notes.txt",
+}
+
+
+def _is_yolo_label_file(file_path):
+    """Only accept numeric YOLO box rows, or empty files inside labels folders.
+
+    A .txt suffix alone is not enough: datasets commonly include README/license
+    files. Empty per-image YOLO label files are valid when stored under labels/.
+    """
+    path = os.path.normpath(file_path)
+    filename = os.path.basename(path).lower()
+    if filename in NON_ANNOTATION_TEXT_NAMES:
+        return False
+
+    try:
+        with open(file_path, "r", encoding="utf-8-sig") as handle:
+            lines = [line.strip() for line in handle if line.strip()]
+    except (OSError, UnicodeError):
+        return False
+
+    if not lines:
+        return any(part.lower() in {"label", "labels"} for part in path.split(os.sep))
+
+    for line in lines:
+        values = line.split()
+        if len(values) != 5:
+            return False
+        try:
+            class_id = int(values[0])
+            x_center, y_center, width, height = map(float, values[1:])
+        except ValueError:
+            return False
+        if class_id < 0 or not all(0.0 <= value <= 1.0 for value in (x_center, y_center, width, height)):
+            return False
+        if width == 0 or height == 0:
+            return False
+    return True
+
 
 
 def dataset_scan(dataset_path):
@@ -89,6 +133,9 @@ def dataset_scan(dataset_path):
 
     """
 
+    if not os.path.isdir(dataset_path):
+        raise ValueError(f"数据集路径不存在或不是目录：{dataset_path}")
+
     tool_log(
         "dataset_scan",
         "start"
@@ -110,8 +157,22 @@ def dataset_scan(dataset_path):
     annotation_files = set()
     mask_dirs = set()
     annotation_formats = set()
+    category_distribution = {}
 
     for root, dirs, files in os.walk(dataset_path):
+        # Mask 目录中的图片是标注掩码，不应计入数据集原图数量。
+        # 同时跳过其全部子目录，避免嵌套结构再次把 Mask 算作普通图片。
+        rel_path = os.path.relpath(root, dataset_path)
+        path_parts = rel_path.split(os.sep)
+        folder_name = os.path.basename(root)
+        is_mask_directory = any(part.lower() in MASK_DIR_NAMES for part in path_parts)
+
+        if folder_name.lower() in MASK_DIR_NAMES:
+            mask_dirs.add(root)
+
+        if is_mask_directory:
+            continue
+
         for file in files:
             ext = os.path.splitext(file)[1].lower()
 
@@ -122,19 +183,16 @@ def dataset_scan(dataset_path):
                 image_dirs.add(root)
                 #统计train val test各自数量
                 # 用相对路径的第一级目录判断（支持 train/good、test/broken_large 等嵌套结构）
-                rel_path = os.path.relpath(root, dataset_path)
-                path_parts = rel_path.split(os.sep)
                 if path_parts and path_parts[0] in splits:
                     splits[path_parts[0]] += 1
+                    if len(path_parts) >= 2:
+                        split_name, category_name = path_parts[0], path_parts[1]
+                        split_categories = category_distribution.setdefault(split_name, {})
+                        split_categories[category_name] = split_categories.get(category_name, 0) + 1
 
             #扫描annotation_files（标记文件 ）
-            if ext in ANNOTATION_EXTENSIONS:
+            if ext in ANNOTATION_EXTENSIONS and (ext != ".txt" or _is_yolo_label_file(os.path.join(root, file))):
                 annotation_files.add(os.path.join(root, file))
-
-        # mask_dirs（掩码）
-        folder_name = os.path.basename(root)
-        if folder_name in MASK_DIR_NAMES:
-            mask_dirs.add(root)
 
     for file in annotation_files:
         ext = os.path.splitext(file)[1].lower()
@@ -166,6 +224,8 @@ def dataset_scan(dataset_path):
               "image_extensions":list(image_extensions),
 
               "annotation_format": list(annotation_formats),
+
+              "category_distribution": category_distribution,
 
             }
 

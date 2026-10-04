@@ -53,9 +53,13 @@ const analysisRows = computed(() => flattenDatasetGroups(result.value?.image_ana
   defectMean: item.defect_ratio?.mean,
   defectMin: item.defect_ratio?.min,
   defectMax: item.defect_ratio?.max,
+  maskCount: item.defect_ratio?.mask_count ?? 0,
   hasMask: Boolean(item.defect_ratio?.has_mask),
 })))
 const classRows = computed(() => Object.entries(result.value?.class_distribution || {}).map(([name, count]) => ({ name, count })))
+const categoryRows = computed(() => Object.entries(result.value?.category_distribution || {}).flatMap(([split, categories]) =>
+  Object.entries(categories || {}).map(([category, count]) => ({ split, category, count })),
+))
 const fileRows = computed(() => {
   const fileSplits = artifacts.value?.file_tree?.splits || {}
   return Object.entries(fileSplits).flatMap(([split, groups]) =>
@@ -97,6 +101,7 @@ function formatNumber(value, digits = 2) {
 }
 
 function formatPercent(value) {
+  if (value == null || value === '') return '-'
   const number = Number(value)
   return Number.isFinite(number) ? `${(number * 100).toFixed(2)}%` : '-'
 }
@@ -184,6 +189,23 @@ onBeforeUnmount(() => clearInterval(timer))
       v-if="runStore.selectedRun?.error"
       type="error"
       :title="runStore.selectedRun.error"
+      :closable="false"
+      show-icon
+    />
+
+    <el-alert
+      v-if="result.observation_warning"
+      type="warning"
+      :title="result.observation_warning"
+      :closable="false"
+      show-icon
+    />
+
+    <el-alert
+      v-for="(warning, index) in (artifacts.warnings || [])"
+      :key="`artifact-warning-${index}`"
+      type="warning"
+      :title="warning"
       :closable="false"
       show-icon
     />
@@ -315,10 +337,10 @@ onBeforeUnmount(() => clearInterval(timer))
           <el-table-column prop="widthRange" label="宽度范围" min-width="120" />
           <el-table-column prop="heightRange" label="高度范围" min-width="120" />
           <el-table-column label="平均缺陷占比" min-width="140" align="right">
-            <template #default="scope"><strong class="table-emphasis">{{ formatPercent(scope.row.defectMean) }}</strong></template>
+            <template #default="scope"><strong class="table-emphasis">{{ scope.row.maskCount ? formatPercent(scope.row.defectMean) : '无有效 Mask' }}</strong></template>
           </el-table-column>
           <el-table-column label="Mask" width="90" align="center">
-            <template #default="scope"><el-tag :type="scope.row.hasMask ? 'success' : 'info'" effect="plain">{{ scope.row.hasMask ? '有' : '无' }}</el-tag></template>
+            <template #default="scope"><el-tag :type="scope.row.maskCount ? 'success' : 'info'" effect="plain">{{ scope.row.maskCount ? `${scope.row.maskCount} 张` : (scope.row.hasMask ? '未匹配' : '无') }}</el-tag></template>
           </el-table-column>
         </el-table>
         <div v-else class="empty-panel">暂无图像分析数据</div>
@@ -330,23 +352,53 @@ onBeforeUnmount(() => clearInterval(timer))
             <div><span>标注格式</span><strong>{{ annotationFormat }}</strong></div>
             <div><span>标注文件</span><strong>{{ result.annotation_file_count ?? 0 }}</strong></div>
             <div><span>有效文件</span><strong>{{ result.valid_annotation_count ?? 0 }}</strong></div>
-            <div><span>小目标占比</span><strong>{{ formatPercent(result.small_object_ratio) }}</strong></div>
+            <div><span>小目标占比</span><strong>{{ result.bbox_statistics?.total_bbox ? formatPercent(result.small_object_ratio) : '无边界框标注' }}</strong></div>
           </section>
+          <el-alert
+            v-if="result.annotation_errors?.length"
+            type="warning"
+            :title="`有 ${result.invalid_annotation_count} 个标注文件未能解析；下方列出原因。有效文件数只统计通过校验的文件。`"
+            :closable="false"
+            show-icon
+          />
+          <el-alert
+            v-for="(item, index) in (result.annotation_errors || [])"
+            :key="`annotation-error-${index}`"
+            type="error"
+            :title="`${fileName(item.file)}（${item.format}）：${item.error}`"
+            :closable="false"
+            show-icon
+          />
+          <el-alert
+            v-for="(item, index) in (result.annotation_warnings || [])"
+            :key="`annotation-warning-${index}`"
+            type="info"
+            :title="`${item.count} 个文件：${item.warning}${item.files?.length ? `（例如：${item.files.join('、')}）` : ''}`"
+            :closable="false"
+            show-icon
+          />
           <section class="bbox-panel">
-            <div class="subsection-head"><div><h3>边界框统计</h3><p>有效标注中的目标框面积</p></div></div>
+            <div class="subsection-head"><div><h3>边界框统计</h3><p>{{ result.bbox_statistics?.total_bbox ? '通过校验的边界框面积统计' : (result.valid_annotation_count ? '标注文件通过校验，但没有目标框' : '未发现有效框标注；Mask 缺陷面积见图像分析页') }}</p></div></div>
             <div class="difference-grid">
-              <div><span>总数</span><strong>{{ result.bbox_statistics?.total_bbox ?? 0 }}</strong></div>
-              <div><span>平均面积</span><strong>{{ formatNumber(result.bbox_statistics?.mean_area) }}</strong></div>
-              <div><span>面积范围</span><strong>{{ formatRange(result.bbox_statistics?.min_area, result.bbox_statistics?.max_area) }}</strong></div>
+              <div><span>总数</span><strong>{{ result.valid_annotation_count ? (result.bbox_statistics?.total_bbox ?? 0) : '未提供' }}</strong></div>
+              <div><span>平均面积</span><strong>{{ result.valid_annotation_count ? formatNumber(result.bbox_statistics?.mean_area) : '未提供' }}</strong></div>
+              <div><span>面积范围</span><strong>{{ result.valid_annotation_count ? formatRange(result.bbox_statistics?.min_area, result.bbox_statistics?.max_area) : '未提供' }}</strong></div>
             </div>
           </section>
           <section class="class-panel">
-            <div class="subsection-head"><div><h3>类别分布</h3><p>有效标注中的类别数量</p></div></div>
+            <div class="subsection-head"><div><h3>目录类别分布</h3><p>按 train/test/val 下的类别目录统计图片数；不等同于目标框类别</p></div></div>
+            <el-table v-if="categoryRows.length" :data="categoryRows" stripe>
+              <el-table-column prop="split" label="数据划分" />
+              <el-table-column prop="category" label="目录类别" />
+              <el-table-column prop="count" label="图片数" align="right" />
+            </el-table>
+            <div v-else class="compact-empty">未识别到按类别分组的目录</div>
+            <div class="subsection-head annotation-subhead"><div><h3>目标框类别</h3><p>仅由有效的 COCO/VOC/YOLO 框标注解析得到</p></div></div>
             <el-table v-if="classRows.length" :data="classRows" stripe>
               <el-table-column prop="name" label="类别" />
               <el-table-column prop="count" label="数量" align="right" />
             </el-table>
-            <div v-else class="compact-empty">没有可用的类别标注</div>
+            <div v-else class="compact-empty">没有可用的目标框类别标注；这不代表没有异常类别或 Mask</div>
           </section>
         </div>
       </el-tab-pane>

@@ -102,6 +102,7 @@ def build_split_chart_data(splits, dataset_name):
         "val": "#fbbf24",
     }
 
+
     colors = []
 
     for k, v in splits.items():
@@ -127,6 +128,31 @@ def build_split_chart_data(splits, dataset_name):
         },
     }
 
+
+def build_category_chart_data(category_distribution, dataset_name):
+    """Build a chart from image counts grouped by split and directory category."""
+    if not isinstance(category_distribution, dict):
+        return None
+
+    labels = []
+    values = []
+    for split, categories in category_distribution.items():
+        if not isinstance(categories, dict):
+            continue
+        for category, count in categories.items():
+            labels.append(f"{split}/{category}")
+            values.append(int(count or 0))
+
+    if not labels:
+        return None
+    return {
+        "id": "category_distribution",
+        "title": f"{dataset_name} / 目录类别图像数量",
+        "type": "bar",
+        "orientation": "h",
+        "xaxis_title": "图像数量",
+        "data": {"labels": labels, "values": values, "colors": ["#0f766e"]},
+    }
 
 
 def build_image_size_chart_data(image_analysis, dataset_name):
@@ -210,6 +236,8 @@ def build_defect_ratio_chart_data(image_analysis, dataset_name):
             dr = info.get("defect_ratio", {})
 
             if not dr or not dr.get("has_mask", False):
+                continue
+            if dr.get("mean") is None or int(dr.get("mask_count", 0) or 0) == 0:
                 continue
 
             labels.append(f"{split}/{cat}")
@@ -514,6 +542,13 @@ def plot_generator(profile_data):
     if chart_split:
         interactive_charts.append(chart_split)
 
+    chart_categories = build_category_chart_data(
+        scan.get("category_distribution", {}),
+        dataset_name,
+    )
+    if chart_categories:
+        interactive_charts.append(chart_categories)
+
     # ==================
     # 2. 图像尺寸分布
     # ==================
@@ -568,6 +603,7 @@ def plot_generator(profile_data):
 
     profile_json_path = os.path.join(OUTPUT_DIR, "dataset_profile.json")
 
+    artifact_warnings = []
     try:
 
         profile_summary = {
@@ -575,6 +611,7 @@ def plot_generator(profile_data):
             "dataset_path": scan.get("dataset_path", ""),
             "image_count": scan.get("image_count", 0),
             "splits": scan.get("splits", {}),
+            "category_distribution": scan.get("category_distribution", {}),
             "annotation_format": scan.get("annotation_format", []),
             "image_extensions": scan.get("image_extensions", []),
             "quality_statistics": quality.get("quality_statistics", {}),
@@ -594,12 +631,15 @@ def plot_generator(profile_data):
                     else str(x)
             )
 
-    except Exception:
-        pass
+    except (OSError, TypeError, ValueError) as exc:
+        print(f"[plot_generator] profile JSON save failed: {type(exc).__name__}: {exc}")
+        profile_json_path = None
+        artifact_warnings.append(f"画像 JSON 文件未能保存（{type(exc).__name__}），图表和页面结果仍可用")
 
     result = {
         "artifacts": {
             "profile_json": profile_json_path,
+            "warnings": artifact_warnings,
             "interactive_charts": interactive_charts,
             "sample_images": sample_images,
             "file_tree": file_tree,

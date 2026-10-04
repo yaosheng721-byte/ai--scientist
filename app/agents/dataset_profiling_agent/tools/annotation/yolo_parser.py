@@ -61,7 +61,7 @@ def parse_yolo(annotation_path):
         if not line:
             continue
         parts = line.split()
-        if len(parts) < 5:
+        if len(parts) != 5:
             # 可能不是 YOLO 标注文件（如 README.txt）
             return {
                 "annotation_format": "YOLO",
@@ -74,6 +74,12 @@ def parse_yolo(annotation_path):
             y = float(parts[2])
             w = float(parts[3])
             h = float(parts[4])
+            if class_id < 0 or not all(0.0 <= value <= 1.0 for value in (x, y, w, h)) or w == 0 or h == 0:
+                return {
+                    "annotation_format": "YOLO",
+                    "is_valid": False,
+                    "error": "YOLO 类别编号或归一化坐标超出有效范围",
+                }
             valid_lines.append((class_id, x, y, w, h))
         except ValueError:
             return {
@@ -83,10 +89,19 @@ def parse_yolo(annotation_path):
             }
 
     if not valid_lines:
+        # An empty per-image labels/*.txt file is valid YOLO: it means no boxes.
+        # The scanner only passes empty files found inside a labels directory.
         return {
             "annotation_format": "YOLO",
-            "is_valid": False,
-            "error": "文件内容为空或不是 YOLO 格式",
+            "is_valid": True,
+            "class_distribution": {},
+            "bbox_statistics": {
+                "total_bbox": 0,
+                "mean_area": 0,
+                "max_area": 0,
+                "min_area": 0,
+            },
+            "small_object_ratio": 0,
         }
 
     # 3. 尝试找到 classes.txt
@@ -155,5 +170,4 @@ def parse_yolo(annotation_path):
         "small_object_ratio": small_object_ratio,
         "note": "bbox 面积为归一化值（0~1），非像素面积",
     }
-
     return result
